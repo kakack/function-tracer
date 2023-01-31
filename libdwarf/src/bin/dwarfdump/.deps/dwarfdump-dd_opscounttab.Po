@@ -1,0 +1,3 @@
+dwarfdump-dd_opscounttab.o: dd_opscounttab.c dd_opscounttab.h
+
+dd_opscounttab.h:
