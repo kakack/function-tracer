@@ -763,6 +763,38 @@ get_addr(Dwarf_Attribute attr,Dwarf_Addr *val)
     }
     return;
 }
+
+static int
+getlowhighpc(
+    Dwarf_Die die,
+    int  *have_pc_range,
+    Dwarf_Addr *lowpc_out,
+    Dwarf_Addr *highpc_out,
+    Dwarf_Error*error)
+{
+    Dwarf_Addr hipc = 0;
+    int res = 0;
+    Dwarf_Half form = 0;
+    enum Dwarf_Form_Class formclass = 0;
+
+    *have_pc_range = FALSE;
+    res = dwarf_lowpc(die,lowpc_out,error);
+    if (res == DW_DLV_OK) {
+        res = dwarf_highpc_b(die,&hipc,&form,&formclass,error);
+        if (res == DW_DLV_OK) {
+            if (formclass == DW_FORM_CLASS_CONSTANT) {
+                hipc += *lowpc_out;
+            }
+            *highpc_out = hipc;
+            *have_pc_range = TRUE;
+            return DW_DLV_OK;
+        }
+    }
+    /*  Cannot check ranges yet, we don't know the ranges base
+        offset yet. */
+    return DW_DLV_NO_ENTRY;
+}
+
 static void
 get_number(Dwarf_Attribute attr,Dwarf_Unsigned *val)
 {
