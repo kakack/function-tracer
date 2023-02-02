@@ -1,102 +1,3 @@
-/*
-  Copyright (c) 2009-2020 David Anderson.  All rights reserved.
-
-Redistribution and use in source and binary forms, with
-or without modification, are permitted provided that the
-following conditions are met:
-
-    (1) Redistributions of source code must retain the above
-    copyright notice, this list of conditions and the
-    following disclaimer.
-
-    (2) Redistributions in binary form must reproduce the
-    above copyright notice, this list of conditions and
-    the following disclaimer in the documentation and/or
-    other materials provided with the distribution.
-
-    (3)The name of the author may not be used to endorse
-    or promote products derived from this software without
-    specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY
-EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
-TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
-THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
-NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-*/
-/*  simplereader.c
-    This is an example of code reading dwarf .debug_info.
-    It is kept simple to expose essential features.
-    Though it now has a bunch of special options to enable
-    testing of specific libdwarf features so it's no longer
-    all that simple...
-
-    It does not do all possible error reporting or error handling.
-    It does to a bit of error checking as a help in ensuring
-    that some code works properly... for error checks.
-
-    The --names
-    option adds some extra printing.
-
-    The --check
-    option does some interface and error checking.
-
-    Option new September 2016:
-        --dumpallnames=filepath
-    This causes all the strings from the .debug_info and .debug_types
-    sections to be written to 'filepath'. Any previous contents
-    of the file are wiped out.
-    This could be handy if you want to use the set of strings to
-    investigate ways to improve the density of strings in some way.
-
-    Options new 03 May 2015:
-    These options do something different.
-    They use specific DWARF5 package file libdwarf operations
-    as a way to ensure libdwarf works properly (these
-    specials used by the libdwarf regresson test suite).
-    Examples given assuming dwp object fissionb-ld-new.dwp
-    from the regressiontests
-        --tuhash=hashvalue
-        example: --tuhash=b0dd19898e8aa823
-        It prints a DIE.
-
-        --cuhash=hashvalue
-        example: --cuhash=1e9983f631642b1a
-        It prints a DIE.
-
-        --cufissionhash=hashvalue
-        example: --tufissionhash=1e9983f631642b1a
-        It prints the fission data for this hash.
-
-        --tufissionhash=hashvalue
-        example: --tufissionhash=b0dd19898e8aa823
-        It prints the fission data for this hash.
-
-        --fissionfordie=cunumber
-        example: --fissionfordie=5
-        For CU number 5 (0 is the initial CU/TU)
-        it accesses the CU/TU DIE and then
-        uses that DIE to get the fission data.
-
-    New January 2019:
-        --use-init-fd
-        Instead of using dwarf_init_path(), use
-        dwarf_init_fd() to make particular
-        tests of that interface.
-
-    To use, try
-        make
-        ./simplereader simplereader
-*/
-
 #include <config.h>
 
 #include <stdio.h>  /* fprintf() printf() snprintf() */
@@ -151,21 +52,6 @@ static void get_die_and_siblings(Dwarf_Debug dbg, Dwarf_Die in_die,
     struct srcfilesdata *sf);
 static void resetsrcfiles(Dwarf_Debug dbg,struct srcfilesdata *sf);
 
-/*  Use a generic call to open the file, due to issues with Windows */
-
-static int namesoptionon = 0;
-static int checkoptionon = 0;
-static int dumpallnames = 0;
-FILE *dumpallnamesfile = 0;
-static const  char * dumpallnamespath = 0;
-#if 0
-DW_UT_compile                   0x01  /* DWARF5 */
-DW_UT_type                      0x02  /* DWARF5 */
-DW_UT_partial                   0x03  /* DWARF5 */
-#endif
-
-static int stdrun = TRUE;
-
 static int unittype      = DW_UT_compile;
 static Dwarf_Bool g_is_info = TRUE;
 
@@ -177,16 +63,7 @@ int cu_offset_size = 0;
 static int dienumber = 0;
 static int fissionfordie = -1;
 static int passnullerror = 0;
-/*  These hash representations have to be converted to Dwarf_Sig8
-    before use. */
-static const  char * cuhash = 0;
-static const  char * tuhash = 0;
-static const  char * cufissionhash = 0;
-static const  char * tufissionhash = 0;
 
-/*  So we get clean reports from valgrind and other tools
-    we clean up strdup strings.
-    With a primitive technique as we need nothing fancy. */
 #define DUPSTRARRAYSIZE 100
 static const char *dupstrarray[DUPSTRARRAYSIZE];
 static unsigned    dupstrused;
@@ -200,107 +77,6 @@ cleanupstr(void)
         dupstrarray[i] = 0;
     }
     dupstrused = 0;
-}
-
-static unsigned  char_to_uns4bit(unsigned char c)
-{
-    unsigned v;
-    if ( c >= '0' && c <= '9') {
-        v =  c - '0';
-    }
-    else if ( c >= 'a' && c <= 'f') {
-        v =  c - 'a' + 10;
-    }
-    else if ( c >= 'A' && c <= 'F') {
-        v =  c - 'A' + 10;
-    } else {
-        printf("Garbage hex char in %c 0x%x\n",c,c);
-        exit(EXIT_FAILURE);
-    }
-    return v;
-}
-
-static void
-xfrm_to_sig8(const char *cuhash_in, Dwarf_Sig8 *hash_out)
-{
-    char localhash[16];
-    unsigned hashin_len = strlen(cuhash_in);
-    unsigned fixed_size = sizeof(localhash);
-    unsigned init_byte = 0;
-    unsigned i;
-
-    memset(localhash,0,fixed_size);
-    if (hashin_len > fixed_size) {
-        printf("FAIL: argument hash too long, len %u val:\"%s\"\n",
-            hashin_len, cuhash_in);
-        exit(EXIT_FAILURE);
-    }
-    if (hashin_len  < fixed_size) {
-        unsigned add_zeros = fixed_size - hashin_len;
-        for ( ; add_zeros > 0; add_zeros--) {
-            localhash[init_byte] = '0';
-            init_byte++;
-        }
-    }
-    for (i = 0; i < hashin_len; ++i,++init_byte) {
-        localhash[init_byte] = cuhash_in[i];
-    }
-
-    /*  So now local hash as a full 16 bytes of hex characters with
-        any needed leading zeros.
-        transform it to 8 byte hex signature */
-
-    for (i = 0; i < sizeof(Dwarf_Sig8) ; ++i) {
-        unsigned char hichar = localhash[2*i];
-        unsigned char lochar = localhash[2*i+1];
-        hash_out->signature[i] =
-            (char_to_uns4bit(hichar) << 4)  |
-            char_to_uns4bit(lochar);
-    }
-    printf("Hex key = 0x");
-    for (i = 0; i < sizeof(Dwarf_Sig8) ; ++i) {
-        unsigned char c = hash_out->signature[i];
-        printf("%02x",c);
-    }
-    printf("\n");
-}
-
-static int
-startswithextractnum(const char *arg,const char *lookfor, int *numout)
-{
-    const char *s = 0;
-    unsigned prefixlen = strlen(lookfor);
-    int v = 0;
-    if (strncmp(arg,lookfor,prefixlen)) {
-        return FALSE;
-    }
-    s = arg+prefixlen;
-    /*  We are not making any attempt to deal with garbage.
-        Pass in good data... */
-    v = atoi(s);
-    *numout = v;
-    return TRUE;
-}
-
-static int
-startswithextractstring(const char *arg,const char *lookfor,
-    const char ** ptrout)
-{
-    const char *s = 0;
-    unsigned prefixlen = strlen(lookfor);
-    if (strncmp(arg,lookfor,prefixlen)) {
-        return FALSE;
-    }
-    s = arg+prefixlen;
-    *ptrout = strdup(s);
-    dupstrarray[dupstrused] = *ptrout;
-    dupstrused++;
-    if (dupstrused >= DUPSTRARRAYSIZE) {
-        printf("FAIL: increase the value DUPSTRARRAYSIZE"
-            " for test purposes\n");
-        exit(EXIT_FAILURE);
-    }
-    return TRUE;
 }
 
 static void
@@ -368,33 +144,15 @@ print_debug_fission_header(struct Dwarf_Debug_Fission_Per_CU_s *fsd)
     }
 }
 
-/*  If there is no 'error' passed into a dwarf function
-    and there is an error, and an error-handler like this
-    is passed.  This example simply returns so we
-    test how well that action works.   */
-static void
-simple_error_handler(Dwarf_Error error,
-    Dwarf_Ptr errarg UNUSEDARG)
-{
-    Dwarf_Unsigned earg =  (Dwarf_Unsigned)(uintptr_t)errarg;
-    printf("\nlibdwarf error detected: 0x%" DW_PR_DUx " %s\n",
-        dwarf_errno(error),dwarf_errmsg(error));
-    printf("libdwarf errarg. %" DW_PR_DUu "\n", earg);
-    return;
-}
-
 int
 main(int argc, char **argv)
 {
     Dwarf_Debug dbg = 0;
     const char *filepath = 0;
-    int use_init_fd = FALSE;
-    int my_init_fd = 0;
     int res = DW_DLV_ERROR;
     Dwarf_Error error;
     Dwarf_Handler errhand = 0;
     Dwarf_Ptr errarg = 0;
-    Dwarf_Sig8 hash8;
     Dwarf_Error *errp  = 0;
     int simpleerrhand = 0;
     int i = 0;
@@ -402,104 +160,16 @@ main(int argc, char **argv)
     char macho_real_path[MACHO_PATH_LEN];
 
     macho_real_path[0] = 0;
-    for (i = 1; i < (argc-1) ; ++i) {
-        if (strcmp(argv[i],"--names") == 0) {
-            namesoptionon=1;
-        } else if (startswithextractstring(argv[1],"--dumpallnames=",
-            &dumpallnamespath)) {
-            dumpallnames=1;
-        } else if (strcmp(argv[i],"--check") == 0) {
-            checkoptionon=1;
-        } else if (startswithextractstring(argv[i],
-            "--tuhash=",&tuhash)) {
-            /* done */
-        } else if (startswithextractstring(argv[i],
-            "--cuhash=",&cuhash)) {
-            /* done */
-        } else if (startswithextractstring(argv[i],
-            "--tufissionhash=",
-            &tufissionhash)) {
-            /* done */
-        } else if (startswithextractstring(argv[i],
-            "--cufissionhash=",
-            &cufissionhash)) {
-            /* done */
-        } else if (strcmp(argv[i],"--passnullerror") == 0) {
-            passnullerror=1;
-        } else if (strcmp(argv[i],"--simpleerrhand") == 0) {
-            simpleerrhand=1;
-        } else if (startswithextractnum(argv[i],
-            "--isinfo=",&g_is_info)) {
-            /* done */
-        } else if (startswithextractnum(argv[i],
-            "--type=",&unittype)) {
-            /* done */
-        } else if (startswithextractnum(argv[i],
-            "--fissionfordie=",
-            &fissionfordie)) {
-            /* done */
-        } else if (!strcmp(argv[i],"--use-init-fd")) {
-            use_init_fd = TRUE;
-            /* done */
-        } else {
-            printf("Unknown argument \"%s\", give up \n",argv[i]);
-            exit(EXIT_FAILURE);
-        }
-    }
-    if (i >= argc) {
-        printf("simplereader not given file to open\n");
-        printf("simplereader exits\n");
-        exit(EXIT_FAILURE);
-    }
+    
     filepath = argv[i];
-    if (dumpallnames) {
-        if (!strcmp(dumpallnamespath,filepath)) {
-            printf("Using --dumpallnames with the same path  "
-                "(%s) "
-                "as the file to read is not allowed. giving up.\n",
-                filepath);
-            exit(EXIT_FAILURE);
-        }
-        dumpallnamesfile = fopen(dumpallnamespath,"w");
-        if (!dumpallnamesfile) {
-            printf("Cannot open %s. Giving up.\n",
-                dumpallnamespath);
-            exit(EXIT_FAILURE);
-        }
-    }
-    if (passnullerror) {
-        errp = 0;
-    } else {
-        errp = &error;
-    }
-    if (simpleerrhand) {
-        errhand = simple_error_handler;
-        /* Not a very useful errarg... */
-        errarg = (Dwarf_Ptr)1;
-    }
-    if (use_init_fd) {
-        /*  For testing a libdwarf init function.
-            We are not finding the true dSYM Macho-object
-            here if that applies, so it's up to the user
-            of simplereader to pass in the correct
-            dSYM object in the dSYM case.
-            dwarf_object_detector_path() could do
-            the dSYM object finding, but to keep this simple
-            we leave that to the reader.  */
-        my_init_fd = open(filepath,O_RDONLY|O_BINARY);
-        if (my_init_fd == -1) {
-            printf("Giving up, cannot open %s\n",filepath);
-            exit(EXIT_FAILURE);
-        }
-        res = dwarf_init_b(my_init_fd,
-            DW_GROUPNUMBER_ANY,
-            errhand,errarg,&dbg,errp);
-    } else {
-        res = dwarf_init_path(filepath,
-            macho_real_path,
-            MACHO_PATH_LEN,
-            DW_GROUPNUMBER_ANY,errhand,errarg,&dbg, errp);
-    }
+   
+    errp = &error;
+
+    res = dwarf_init_path(filepath,
+        macho_real_path,
+        MACHO_PATH_LEN,
+        DW_GROUPNUMBER_ANY,errhand,errarg,&dbg, errp);
+
     if (res != DW_DLV_OK) {
         if (res == DW_DLV_ERROR) {
             if(!passnullerror) {
@@ -512,108 +182,12 @@ main(int argc, char **argv)
         cleanupstr();
         exit(EXIT_FAILURE);
     }
-
-    if (cuhash) {
-        Dwarf_Die die;
-        stdrun = FALSE;
-        xfrm_to_sig8(cuhash,&hash8);
-        printf("\n");
-        printf("Getting die for CU key %s\n",cuhash);
-        res = dwarf_die_from_hash_signature(dbg,
-            &hash8,"cu",
-            &die,errp);
-        if (res == DW_DLV_OK) {
-            struct srcfilesdata sf;
-            printf("Hash found.\n");
-            sf.srcfilesres = DW_DLV_ERROR;
-            sf.srcfiles = 0;
-            sf.srcfilescount = 0;
-            print_die_data(dbg,die,0,&sf);
-            dwarf_dealloc(dbg,die, DW_DLA_DIE);
-        } else if (res == DW_DLV_NO_ENTRY) {
-            printf("cuhash DW_DLV_NO_ENTRY.\n");
-        } else { /* DW_DLV_ERROR */
-            printf("cuhash DW_DLV_ERROR %s\n",
-                errp? dwarf_errmsg(error):"an error");
-        }
-    }
-    if (tuhash) {
-        Dwarf_Die die;
-        stdrun = FALSE;
-        xfrm_to_sig8(tuhash,&hash8);
-        printf("\n");
-        printf("Getting die for TU key %s\n",tuhash);
-        res = dwarf_die_from_hash_signature(dbg,
-            &hash8,"tu",
-            &die,errp);
-        if (res == DW_DLV_OK) {
-            struct srcfilesdata sf;
-            printf("Hash found.\n");
-            sf.srcfilesres = DW_DLV_ERROR;
-            sf.srcfiles = 0;
-            sf.srcfilescount = 0;
-            print_die_data(dbg,die,0,&sf);
-            dwarf_dealloc(dbg,die, DW_DLA_DIE);
-        } else if (res == DW_DLV_NO_ENTRY) {
-            printf("tuhash DW_DLV_NO_ENTRY.\n");
-        } else { /* DW_DLV_ERROR */
-            printf("tuhash DW_DLV_ERROR %s\n",
-                errp?dwarf_errmsg(error):"error!");
-        }
-    }
-    if (cufissionhash) {
-        Dwarf_Debug_Fission_Per_CU  fisdata;
-        stdrun = FALSE;
-        memset(&fisdata,0,sizeof(fisdata));
-        xfrm_to_sig8(cufissionhash,&hash8);
-        printf("\n");
-        printf("Getting fission data for CU key %s\n",cufissionhash);
-        res = dwarf_get_debugfission_for_key(dbg,
-            &hash8,"cu",
-            &fisdata,errp);
-        if (res == DW_DLV_OK) {
-            printf("Hash found.\n");
-            print_debug_fission_header(&fisdata);
-        } else if (res == DW_DLV_NO_ENTRY) {
-            printf("cufissionhash DW_DLV_NO_ENTRY.\n");
-        } else { /* DW_DLV_ERROR */
-            printf("cufissionhash DW_DLV_ERROR %s\n",
-                errp?dwarf_errmsg(error):"error...");
-        }
-    }
-    if (tufissionhash) {
-        Dwarf_Debug_Fission_Per_CU  fisdata;
-        stdrun = FALSE;
-        memset(&fisdata,0,sizeof(fisdata));
-        xfrm_to_sig8(tufissionhash,&hash8);
-        printf("\n");
-        printf("Getting fission data for TU key %s\n",tufissionhash);
-        res = dwarf_get_debugfission_for_key(dbg,
-            &hash8,"tu",
-            &fisdata,errp);
-        if (res == DW_DLV_OK) {
-            printf("Hash found.\n");
-            print_debug_fission_header(&fisdata);
-        } else if (res == DW_DLV_NO_ENTRY) {
-            printf("tufissionhash DW_DLV_NO_ENTRY.\n");
-        } else { /* DW_DLV_ERROR */
-            printf("tufissionhash DW_DLV_ERROR %s\n",
-                errp?dwarf_errmsg(error):" Some error");
-        }
-    }
-    if (stdrun) {
-        read_cu_list(dbg);
-    }
+    read_cu_list(dbg);
     res = dwarf_finish(dbg);
     if (res != DW_DLV_OK) {
         printf("dwarf_finish failed!\n");
     }
-    if (use_init_fd) {
-        close(my_init_fd);
-    }
-    if (dumpallnamesfile) {
-        fclose(dumpallnamesfile);
-    }
+
     cleanupstr();
     return 0;
 }
@@ -742,6 +316,7 @@ get_die_and_siblings(Dwarf_Debug dbg, Dwarf_Die in_die,
     }
     return;
 }
+
 static void
 get_addr(Dwarf_Attribute attr,Dwarf_Addr *val)
 {
@@ -764,63 +339,6 @@ get_addr(Dwarf_Attribute attr,Dwarf_Addr *val)
     return;
 }
 
-static int
-getlowhighpc(
-    Dwarf_Die die,
-    int  *have_pc_range,
-    Dwarf_Addr *lowpc_out,
-    Dwarf_Addr *highpc_out,
-    Dwarf_Error*error)
-{
-    Dwarf_Addr hipc = 0;
-    int res = 0;
-    Dwarf_Half form = 0;
-    enum Dwarf_Form_Class formclass = 0;
-
-    *have_pc_range = FALSE;
-    res = dwarf_lowpc(die,lowpc_out,error);
-    if (res == DW_DLV_OK) {
-        res = dwarf_highpc_b(die,&hipc,&form,&formclass,error);
-        if (res == DW_DLV_OK) {
-            if (formclass == DW_FORM_CLASS_CONSTANT) {
-                hipc += *lowpc_out;
-            }
-            *highpc_out = hipc;
-            *have_pc_range = TRUE;
-            return DW_DLV_OK;
-        }
-    }
-    /*  Cannot check ranges yet, we don't know the ranges base
-        offset yet. */
-    return DW_DLV_NO_ENTRY;
-}
-
-static void
-get_number(Dwarf_Attribute attr,Dwarf_Unsigned *val)
-{
-    Dwarf_Error error = 0;
-    int res;
-    Dwarf_Signed sval = 0;
-    Dwarf_Unsigned uval = 0;
-    Dwarf_Error *errp  = 0;
-
-    if (passnullerror) {
-        errp = 0;
-    } else {
-        errp = &error;
-    }
-    res = dwarf_formudata(attr,&uval,errp);
-    if (res == DW_DLV_OK) {
-        *val = uval;
-        return;
-    }
-    res = dwarf_formsdata(attr,&sval,errp);
-    if (res == DW_DLV_OK) {
-        *val = sval;
-        return;
-    }
-    return;
-}
 static void
 print_subprog(Dwarf_Debug dbg,Dwarf_Die die,
     int level,
@@ -834,9 +352,6 @@ print_subprog(Dwarf_Debug dbg,Dwarf_Die die,
     Dwarf_Addr highpc = 0;
     Dwarf_Signed attrcount = 0;
     Dwarf_Signed i;
-    Dwarf_Unsigned filenum = 0;
-    Dwarf_Unsigned linenum = 0;
-    char *filename = 0;
     Dwarf_Error *errp = 0;
 
     if (passnullerror) {
@@ -859,21 +374,6 @@ print_subprog(Dwarf_Debug dbg,Dwarf_Die die,
         Dwarf_Half aform;
         res = dwarf_whatattr(attrbuf[i],&aform,errp);
         if (res == DW_DLV_OK) {
-            if (aform == DW_AT_decl_file) {
-                Dwarf_Signed filenum_s = 0;
-
-                get_number(attrbuf[i],&filenum);
-                filenum_s = filenum;
-                /*  Would be good to evaluate filenum_s
-                    sanity here, ensuring filenum_s-1 is sensible. */
-                if ((filenum > 0) &&
-                    (sf->srcfilescount > (filenum_s-1))) {
-                    filename = sf->srcfiles[filenum_s-1];
-                }
-            }
-            if (aform == DW_AT_decl_line) {
-                get_number(attrbuf[i],&linenum);
-            }
             if (aform == DW_AT_low_pc) {
                 get_addr(attrbuf[i],&lowpc);
             }
@@ -891,113 +391,27 @@ print_subprog(Dwarf_Debug dbg,Dwarf_Die die,
     }
     /*  Here let's test some alternative interfaces for
         high and low pc. */
-    if (checkoptionon){
-        int hresb = 0;
-        int lres = 0;
-        Dwarf_Addr hipcoffset = 0;
-        Dwarf_Addr althipcb = 0;
-        Dwarf_Addr altlopc = 0;
-        Dwarf_Half highform = 0;
-        enum Dwarf_Form_Class highclass = 0;
 
-        /* Should work for all DWARF DW_AT_high_pc.  */
-        hresb = dwarf_highpc_b(die,&althipcb,&highform,
-            &highclass,errp);
-        lres = dwarf_lowpc(die,&altlopc,errp);
-        printf("high_pc checking %s ",name);
-        if (hresb == DW_DLV_OK) {
-            /* present, FORM addr or const. */
-            if (highform == DW_FORM_addr) {
-                printf("highpcb  0x%" DW_PR_XZEROS DW_PR_DUx " ",
-                    althipcb);
-            } else {
-                if (lres == DW_DLV_OK) {
-                    hipcoffset = althipcb;
-                    althipcb = altlopc + hipcoffset;
-                    printf("highpcb  0x%" DW_PR_XZEROS DW_PR_DUx " "
-                        "highoff  0x%" DW_PR_XZEROS DW_PR_DUx " ",
-                        althipcb,hipcoffset);
-                } else {
-                    printf("highoff  0x%" DW_PR_XZEROS DW_PR_DUx " ",
-                        althipcb);
-                }
-            }
-        } else if (hresb == DW_DLV_ERROR) {
-            printf("dwarf_highpc_b() error!");
-        } else {
-            /* absent */
-        }
+    int hresb = 0;
+    int lres = 0;
+    Dwarf_Addr althipcb = 0;
+    Dwarf_Addr altlopc = 0;
+    Dwarf_Half highform = 0;
+    enum Dwarf_Form_Class highclass = 0;
 
-        /* Should work for all DWARF DW_AT_low_pc */
-        if (lres == DW_DLV_OK) {
-            /* present, FORM addr. */
-            printf("lowpc    0x%" DW_PR_XZEROS DW_PR_DUx " ",
-                altlopc);
-        } else if (lres == DW_DLV_ERROR) {
-            printf("dwarf_lowpc() error!");
-        } else {
-            /* absent. */
-        }
+    /* Should work for all DWARF DW_AT_high_pc.  */
+    hresb = dwarf_highpc_b(die,&althipcb,&highform,
+        &highclass,errp);
+    lres = dwarf_lowpc(die,&altlopc,errp);
+
+    if (hresb == DW_DLV_OK && lres == DW_DLV_OK) {
+        althipcb += altlopc;
+        printf("function name: %s ", name);
+        printf("lowpc    0x%" DW_PR_XZEROS DW_PR_DUx " ",
+            altlopc);
+        printf("highpcb  0x%" DW_PR_XZEROS DW_PR_DUx " ",
+                althipcb);
         printf("\n");
-
-    }
-    if (namesoptionon && (filenum || linenum)) {
-        printf("<%3d> file: %" DW_PR_DUu " %s  line %"
-            DW_PR_DUu "\n",level,filenum,filename?filename:"",
-            linenum);
-    }
-    if (namesoptionon && lowpc) {
-        printf("<%3d> low_pc : 0x%" DW_PR_DUx  "\n",
-            level, (Dwarf_Unsigned)lowpc);
-    }
-    if (namesoptionon && highpc) {
-        printf("<%3d> high_pc: 0x%" DW_PR_DUx  "\n",
-            level, (Dwarf_Unsigned)highpc);
-    }
-    dwarf_dealloc(dbg,attrbuf,DW_DLA_LIST);
-}
-
-static void
-print_comp_dir(Dwarf_Debug dbg,Dwarf_Die die,
-    int level, struct srcfilesdata *sf)
-{
-    int res;
-    Dwarf_Error error = 0;
-    Dwarf_Attribute *attrbuf = 0;
-    Dwarf_Signed attrcount = 0;
-    Dwarf_Signed i;
-    Dwarf_Error *errp = 0;
-
-    if (passnullerror) {
-        errp = 0;
-    } else {
-        errp = &error;
-    }
-
-    res = dwarf_attrlist(die,&attrbuf,&attrcount,errp);
-    if (res != DW_DLV_OK) {
-        return;
-    }
-    sf->srcfilesres = dwarf_srcfiles(die,&sf->srcfiles,
-        &sf->srcfilescount,
-        &error);
-    for (i = 0; i < attrcount ; ++i) {
-        Dwarf_Half aform;
-        res = dwarf_whatattr(attrbuf[i],&aform,errp);
-        if (res == DW_DLV_OK) {
-            if (aform == DW_AT_comp_dir) {
-                char *name = 0;
-                res = dwarf_formstring(attrbuf[i],&name,errp);
-                if (res == DW_DLV_OK) {
-                    printf("<%3d> compilation directory : \"%s\"\n",
-                        level,name);
-                }
-            }
-            if (aform == DW_AT_stmt_list) {
-                /* Offset of stmt list for this CU in .debug_line */
-            }
-        }
-        dwarf_dealloc(dbg,attrbuf[i],DW_DLA_ATTR);
     }
     dwarf_dealloc(dbg,attrbuf,DW_DLA_LIST);
 }
@@ -1016,76 +430,6 @@ resetsrcfiles(Dwarf_Debug dbg,struct srcfilesdata *sf)
     sf->srcfilesres = DW_DLV_ERROR;
     sf->srcfiles = 0;
     sf->srcfilescount = 0;
-}
-
-static void
-print_single_string(Dwarf_Debug dbg, Dwarf_Die die,
-    Dwarf_Half attrnum)
-{
-    int res = 0;
-    Dwarf_Error error = 0;
-    char * stringval = 0;
-
-    res = dwarf_die_text(die,attrnum, &stringval,&error);
-    if (res == DW_DLV_OK) {
-        fprintf(dumpallnamesfile,"%s\n",stringval);
-        dwarf_dealloc(dbg,stringval, DW_DLA_STRING);
-    }
-    return;
-}
-
-static void
-print_name_strings_attr(Dwarf_Debug dbg, Dwarf_Die die,
-    Dwarf_Attribute attr)
-{
-    int res = 0;
-    Dwarf_Half attrnum = 0;
-    Dwarf_Half finalform = 0;
-    enum Dwarf_Form_Class cl = DW_FORM_CLASS_UNKNOWN;
-    Dwarf_Error error = 0;
-
-    res = dwarf_whatattr(attr,&attrnum,&error);
-    if (res != DW_DLV_OK) {
-        printf("Unable to get attr number");
-        exit(EXIT_FAILURE);
-    }
-
-    res = dwarf_whatform(attr,&finalform,&error);
-    if (res != DW_DLV_OK) {
-        printf("Unable to get attr form");
-        exit(EXIT_FAILURE);
-    }
-
-    cl = dwarf_get_form_class(cu_version_stamp,
-        attrnum,cu_offset_size,finalform);
-
-    if (cl != DW_FORM_CLASS_STRING) {
-        return;
-    }
-    print_single_string(dbg,die,attrnum);
-}
-
-static void
-printnamestrings(Dwarf_Debug dbg, Dwarf_Die die)
-{
-    Dwarf_Error error =0;
-    Dwarf_Attribute *atlist = 0;
-    Dwarf_Signed atcount = 0;
-    Dwarf_Signed i = 0;
-    int res = 0;
-
-    res = dwarf_attrlist(die,&atlist, &atcount,&error);
-    if (res != DW_DLV_OK) {
-        return;
-    }
-    for (i = 0; i < atcount; ++i) {
-        Dwarf_Attribute attr = atlist[i];
-        /*  Use an empty attr to get a placeholder on
-            the attr list for this IRDie. */
-        print_name_strings_attr(dbg,die,attr);
-    }
-    dwarf_dealloc(dbg,atlist, DW_DLA_LIST);
-
 }
 
 static void
@@ -1126,9 +470,7 @@ print_die_data_i(Dwarf_Debug dbg, Dwarf_Die print_me,
         printf("Error in dwarf_get_TAG_name , level %d \n",level);
         exit(EXIT_FAILURE);
     }
-    if (dumpallnames) {
-        printnamestrings(dbg,print_me);
-    }
+
     res = dwarf_attr(print_me,DW_AT_name,&attr, errp);
     if (res != DW_DLV_OK) {
         /* do nothing */
@@ -1145,37 +487,10 @@ print_die_data_i(Dwarf_Debug dbg, Dwarf_Die print_me,
         }
         dwarf_dealloc(dbg,attr,DW_DLA_ATTR);
     }
-
-    if (namesoptionon ||checkoptionon) {
-        if ( tag == DW_TAG_subprogram) {
-            if (namesoptionon) {
-                printf("<%3d> subprogram            : \"%s\"\n",
-                    level,name);
-            }
-            print_subprog(dbg,print_me,level,sf,name);
-        }
-        if ( (namesoptionon) && (tag == DW_TAG_compile_unit ||
-            tag == DW_TAG_partial_unit ||
-            tag == DW_TAG_type_unit)) {
-
-            resetsrcfiles(dbg,sf);
-            printf("<%3d> source file           : \"%s\"\n",
-                level,name);
-            print_comp_dir(dbg,print_me,level,sf);
-        }
-    } else {
-        printf("<%d> tag: %d %s  name: \"%s\"",level,tag,
-            tagname,name);
-        if (formname) {
-            printf(" FORM 0x%x \"%s\"",formnum, formname);
-        }
-        printf("\n");
+    
+    if (tag == DW_TAG_subprogram && name != "<no DW_AT_name attr>") {
+        print_subprog(dbg,print_me,level,sf,name);
     }
-    /*  This dwarf_dealloc was always wrong but
-        before March 14, 2020 the documentation said
-        the dwarf_dealloc was necessary.
-        dwarf_dealloc(dbg,name,DW_DLA_STRING); */
-
 }
 
 static void
