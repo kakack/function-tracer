@@ -1,0 +1,32 @@
+libdwarf_la-dwarf_str_offsets.lo: dwarf_str_offsets.c ../../../config.h \
+  /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/14.0.0/include/stddef.h \
+  /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/14.0.0/include/__stddef_max_align_t.h \
+  dwarf.h libdwarf.h libdwarf_private.h dwarf_base_types.h \
+  dwarf_opaque.h dwarf_alloc.h dwarf_error.h dwarf_util.h dwarf_string.h \
+  dwarf_str_offsets.h
+
+../../../config.h:
+
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/14.0.0/include/stddef.h:
+
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/14.0.0/include/__stddef_max_align_t.h:
+
+dwarf.h:
+
+libdwarf.h:
+
+libdwarf_private.h:
+
+dwarf_base_types.h:
+
+dwarf_opaque.h:
+
+dwarf_alloc.h:
+
+dwarf_error.h:
+
+dwarf_util.h:
+
+dwarf_string.h:
+
+dwarf_str_offsets.h:
