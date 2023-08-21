@@ -1,0 +1,38 @@
+Time： 20230714
+1 Associated modules:
+	V-Builder
+	vspace_debugger
+
+2 Patch list:
+	03dбe336 fix dump exit bug
+
+3 Fixed bugs:
+	1)修复elf dump信息获取失败后程序强行退出的bug
+
+4 New Features:
+	null
+
+Self Test report:
+	https://univistaisg.sharepoint.cn/:x:/r/sites/uv-space/_layouts/15/Doc.aspx?sourcedoc=%7BD1385A9A-FE79-43E0-8CB4-17E337F3B4C6%7D&file=V-Builder_FunctionTracer_Test_Report.xlsx&action=default&mobileredirect=true
+
+
+Time： 20230705
+1 Associated modules:
+	V-Builder
+	vspace_debugger
+
+2 Patch list:
+	4e54845b modify Ir update strategy
+	55722f06 adapt to all four arch
+	9d09d5cb trace algorithmbug fixed
+	42fdc476 trace algorithmbug fixed
+	c83cc8e1 trace algorithm update
+
+3 Fixed bugs:
+	null
+
+4 New Features:
+	更新trace algorithm，修复原有无法正常trace的问题
+
+Self Test report:
+	https://univistaisg.sharepoint.cn/:x:/r/sites/uv-space/_layouts/15/Doc.aspx?sourcedoc=%7BD1385A9A-FE79-43E0-8CB4-17E337F3B4C6%7D&file=V-Builder_FunctionTracer_Test_Report.xlsx&action=default&mobileredirect=true
